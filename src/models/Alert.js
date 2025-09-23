@@ -71,6 +71,20 @@ const alertSchema = new mongoose.Schema({
         name: String
       }]
     },
+    whatsapp: {
+      enabled: {
+        type: Boolean,
+        default: false
+      },
+      recipients: [{
+        phoneNumber: {
+          type: String,
+          required: true,
+          match: [/^\+[1-9]\d{1,14}$/, 'Please provide a valid phone number with country code (e.g., +1234567890)']
+        },
+        name: String
+      }]
+    }
   },
   schedule: {
     enabled: {
@@ -103,7 +117,7 @@ const alertSchema = new mongoose.Schema({
     },
     escalationChannels: [{
       type: String,
-      enum: ['email']
+      enum: ['email', 'whatsapp']
     }]
   },
   status: {
@@ -296,6 +310,9 @@ alertSchema.methods.getActiveChannels = function() {
     channels.push('email');
   }
   
+  if (this.channels.whatsapp.enabled && this.channels.whatsapp.recipients.length > 0) {
+    channels.push('whatsapp');
+  }
   
   return channels;
 };

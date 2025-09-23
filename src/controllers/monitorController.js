@@ -90,6 +90,14 @@ export const createMonitor = async (req, res, next) => {
 
     const monitor = await Monitor.create(monitorData);
 
+    // Create default alerts for the monitor
+    try {
+      await createDefaultAlerts(monitor, req.user);
+    } catch (alertError) {
+      console.error('Failed to create default alerts:', alertError);
+      // Don't fail monitor creation if alerts fail
+    }
+
     // Perform initial health check and add to monitoring service
     try {
       const { performHealthCheck, addMonitorToService } = await import('../services/monitoringService.js');
@@ -446,6 +454,83 @@ export const getMonitorMetrics = async (req, res, next) => {
   }
 };
 
+// Create default alerts for a monitor
+const createDefaultAlerts = async (monitor, user) => {
+  try {
+    // Check if user has notification preferences set
+    const hasEmailNotifications = user.preferences?.emailNotifications || false;
+    const hasWhatsAppNotifications = user.preferences?.whatsappNotifications || false;
+    const alertEmail = user.preferences?.alertEmail || user.email;
+    const whatsappNumber = user.preferences?.whatsappNumber;
+
+    // Create downtime alert
+    const downtimeAlert = {
+      user: user._id,
+      monitor: monitor._id,
+      type: 'downtime',
+      name: `${monitor.name} - Downtime Alert`,
+      description: `Automatically created alert for when ${monitor.name} goes down`,
+      conditions: {
+        downtimeThreshold: 1 // Alert immediately when monitor goes down
+      },
+      channels: {
+        email: {
+          enabled: hasEmailNotifications,
+          recipients: hasEmailNotifications && alertEmail ? [{
+            email: alertEmail,
+            name: user.name || 'User'
+          }] : []
+        },
+        whatsapp: {
+          enabled: hasWhatsAppNotifications,
+          recipients: hasWhatsAppNotifications && whatsappNumber ? [{
+            phoneNumber: whatsappNumber,
+            name: user.name || 'User'
+          }] : []
+        }
+      },
+      status: 'active'
+    };
+
+    // Create uptime alert
+    const uptimeAlert = {
+      user: user._id,
+      monitor: monitor._id,
+      type: 'uptime',
+      name: `${monitor.name} - Recovery Alert`,
+      description: `Automatically created alert for when ${monitor.name} comes back up`,
+      conditions: {
+        downtimeThreshold: 1 // Alert when monitor comes back up
+      },
+      channels: {
+        email: {
+          enabled: hasEmailNotifications,
+          recipients: hasEmailNotifications && alertEmail ? [{
+            email: alertEmail,
+            name: user.name || 'User'
+          }] : []
+        },
+        whatsapp: {
+          enabled: hasWhatsAppNotifications,
+          recipients: hasWhatsAppNotifications && whatsappNumber ? [{
+            phoneNumber: whatsappNumber,
+            name: user.name || 'User'
+          }] : []
+        }
+      },
+      status: 'active'
+    };
+
+    // Create both alerts
+    await Alert.create([downtimeAlert, uptimeAlert]);
+    
+    console.log(`Created default alerts for monitor: ${monitor.name}`);
+  } catch (error) {
+    console.error('Error creating default alerts:', error);
+    throw error;
+  }
+};
+
 // Helper function to generate mock chart data
 const generateMockChartData = (hours) => {
   const data = [];
@@ -569,6 +654,62 @@ export const testMonitorEmail = async (req, res, next) => {
     res.json({
       success: true,
       message: 'Test email sent successfully'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Create default alerts for existing monitors
+// @route   POST /api/monitors/create-default-alerts
+// @access  Private
+export const createDefaultAlertsForAllMonitors = async (req, res, next) => {
+  try {
+    // Get all monitors for the user
+    const monitors = await Monitor.find({ user: req.user._id });
+    
+    if (monitors.length === 0) {
+      return res.json({
+        success: true,
+        message: 'No monitors found to create alerts for',
+        data: { created: 0 }
+      });
+    }
+
+    let createdCount = 0;
+    const errors = [];
+
+    // Create default alerts for each monitor
+    for (const monitor of monitors) {
+      try {
+        // Check if default alerts already exist
+        const existingAlerts = await Alert.find({
+          monitor: monitor._id,
+          type: { $in: ['downtime', 'uptime'] }
+        });
+
+        if (existingAlerts.length === 0) {
+          await createDefaultAlerts(monitor, req.user);
+          createdCount += 2; // 2 alerts per monitor (downtime + uptime)
+        }
+      } catch (error) {
+        console.error(`Error creating alerts for monitor ${monitor.name}:`, error);
+        errors.push({
+          monitorId: monitor._id,
+          monitorName: monitor.name,
+          error: error.message
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Created default alerts for ${createdCount} alerts across ${monitors.length} monitors`,
+      data: {
+        created: createdCount,
+        monitors: monitors.length,
+        errors: errors.length > 0 ? errors : undefined
+      }
     });
   } catch (error) {
     next(error);

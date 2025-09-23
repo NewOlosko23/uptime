@@ -55,6 +55,23 @@ const userSchema = new mongoose.Schema({
       type: Boolean,
       default: true
     },
+    whatsappNotifications: {
+      type: Boolean,
+      default: false
+    },
+    alertEmail: {
+      type: String,
+      lowercase: true,
+      match: [
+        /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/,
+        'Please provide a valid email for alerts'
+      ]
+    },
+    whatsappNumber: {
+      type: String,
+      trim: true,
+      match: [/^\+?[1-9]\d{1,14}$/, 'Please provide a valid WhatsApp number in international format (e.g., +1234567890)']
+    },
     timezone: {
       type: String,
       default: 'UTC'

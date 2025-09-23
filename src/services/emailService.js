@@ -1,6 +1,18 @@
+import dotenv from 'dotenv';
 import { Resend } from "resend";
+import Mailjet from 'node-mailjet';
 
-const resend = new Resend("re_Pdqo6bbP_4ZrnS2GovxanQZJd3eng6edS");
+// Load environment variables
+dotenv.config();
+
+// Get the selected email provider
+const EMAIL_PROVIDER = process.env.EMAIL_PROVIDER || 'mailjet';
+
+// Initialize email providers only if they have the required API keys
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+const mailjet = process.env.MAILJET_API_KEY && process.env.MAILJET_SECRET_KEY 
+  ? Mailjet.apiConnect(process.env.MAILJET_API_KEY, process.env.MAILJET_SECRET_KEY)
+  : null;
 
 // Email templates
 const templates = {
@@ -208,7 +220,61 @@ const templates = {
   }),
 };
 
-// Send email function
+// Send email via Resend
+const sendEmailViaResend = async ({ to, subject, html }) => {
+  try {
+    if (!resend) {
+      throw new Error('Resend not configured - missing RESEND_API_KEY');
+    }
+
+    const result = await resend.emails.send({
+      from: "Avodal Uptime <noreply@avodal.com>",
+      to: Array.isArray(to) ? to : [to],
+      subject: subject,
+      html: html,
+    });
+
+    console.log("✅ Resend email sent successfully:", result);
+    return result;
+  } catch (error) {
+    console.error("❌ Resend email sending failed:", error);
+    throw error;
+  }
+};
+
+// Send email via Mailjet
+const sendEmailViaMailjet = async ({ to, subject, html }) => {
+  try {
+    if (!mailjet) {
+      throw new Error('Mailjet not configured');
+    }
+
+    const request = mailjet.post('send', { version: 'v3.1' }).request({
+      Messages: [
+        {
+          From: {
+            Email: process.env.MAILJET_FROM_EMAIL || 'noreply@avodal.com',
+            Name: process.env.MAILJET_FROM_NAME || 'Avodal Uptime'
+          },
+          To: Array.isArray(to) 
+            ? to.map(email => ({ Email: email }))
+            : [{ Email: to }],
+          Subject: subject,
+          HTMLPart: html,
+        }
+      ]
+    });
+
+    const result = await request;
+    console.log("✅ Mailjet email sent successfully:", result.body);
+    return result.body;
+  } catch (error) {
+    console.error("❌ Mailjet email sending failed:", error);
+    throw error;
+  }
+};
+
+// Main send email function
 export const sendEmail = async ({ to, subject, template, data, html }) => {
   try {
     let emailContent;
@@ -221,22 +287,26 @@ export const sendEmail = async ({ to, subject, template, data, html }) => {
       throw new Error("Either template or html content must be provided");
     }
 
-    const result = await resend.emails.send({
-      from: "Avodal Uptime <noreply@avodal.com>",
-      to: Array.isArray(to) ? to : [to],
-      subject: emailContent.subject,
-      html: emailContent.html,
-    });
-
-    console.log("Email sent successfully:", result);
-    return result;
+    // Choose email provider based on configuration
+    if (EMAIL_PROVIDER === 'mailjet') {
+      return await sendEmailViaMailjet({
+        to: Array.isArray(to) ? to : [to],
+        subject: emailContent.subject,
+        html: emailContent.html
+      });
+    } else {
+      return await sendEmailViaResend({
+        to: Array.isArray(to) ? to : [to],
+        subject: emailContent.subject,
+        html: emailContent.html
+      });
+    }
   } catch (error) {
     console.error("Email sending failed:", error);
     throw error;
   }
 };
 
-// Send monitor alert email
 // Send test email for monitor
 export const sendTestEmail = async (userEmail, monitor) => {
   try {
@@ -252,15 +322,11 @@ export const sendTestEmail = async (userEmail, monitor) => {
 
     const emailTemplate = templates.monitorAlert(emailData);
     
-    const result = await resend.emails.send({
-      from: "Avodal Uptime <noreply@avodal.com>",
+    return await sendEmail({
       to: [userEmail],
       subject: "🧪 Test Email - Monitor Alert",
-      html: emailTemplate.html,
+      html: emailTemplate.html
     });
-
-    console.log("Test email sent successfully:", result);
-    return result;
   } catch (error) {
     console.error("Error sending test email:", error);
     throw error;
@@ -318,4 +384,50 @@ export const sendIncidentUpdate = async (incident, update) => {
     template: "incidentUpdate",
     data: emailData,
   });
+};
+
+// Test email provider configuration
+export const testEmailProvider = async (testEmail) => {
+  try {
+    const testData = {
+      alertName: "Email Provider Test",
+      monitorName: "Test Monitor",
+      monitorUrl: "https://example.com",
+      status: "up",
+      responseTime: 100,
+      lastCheck: new Date().toISOString(),
+      errorMessage: null
+    };
+
+    const emailTemplate = templates.monitorAlert(testData);
+    
+    const result = await sendEmail({
+      to: [testEmail],
+      subject: `🧪 Email Provider Test - ${EMAIL_PROVIDER.toUpperCase()}`,
+      html: emailTemplate.html
+    });
+
+    return {
+      success: true,
+      provider: EMAIL_PROVIDER,
+      result: result
+    };
+  } catch (error) {
+    console.error("Error testing email provider:", error);
+    return {
+      success: false,
+      provider: EMAIL_PROVIDER,
+      error: error.message
+    };
+  }
+};
+
+// Get current email provider info
+export const getEmailProviderInfo = () => {
+  return {
+    provider: EMAIL_PROVIDER,
+    configured: EMAIL_PROVIDER === 'resend' 
+      ? !!process.env.RESEND_API_KEY
+      : !!(process.env.MAILJET_API_KEY && process.env.MAILJET_SECRET_KEY)
+  };
 };

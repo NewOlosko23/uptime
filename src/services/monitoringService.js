@@ -537,6 +537,10 @@ const triggerAlert = async (alert, monitor, incident) => {
       promises.push(sendMonitorAlert(alert, monitor, incident));
     }
 
+    if (alertResult.channels.includes('whatsapp')) {
+      const { sendMonitorAlertWhatsApp } = await import('./whatsappService.js');
+      promises.push(sendMonitorAlertWhatsApp(alert, monitor, incident));
+    }
 
     await Promise.allSettled(promises);
 

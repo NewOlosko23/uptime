@@ -11,7 +11,8 @@ import {
   getDashboardChart,
   testMonitor,
   getMonitorMetrics,
-  testMonitorEmail
+  testMonitorEmail,
+  createDefaultAlertsForAllMonitors
 } from '../controllers/monitorController.js';
 import { protect, checkMonitorLimit } from '../middleware/auth.js';
 import {
@@ -31,6 +32,7 @@ router.get('/', validatePagination, getMonitors);
 router.get('/dashboard/chart', getDashboardChart);
 router.post('/', checkMonitorLimit, validateMonitor, createMonitor);
 router.post('/test', testMonitor);
+router.post('/create-default-alerts', createDefaultAlertsForAllMonitors);
 router.get('/:id', validateObjectId('id'), getMonitor);
 router.put('/:id', validateObjectId('id'), validateMonitorUpdate, updateMonitor);
 router.delete('/:id', validateObjectId('id'), deleteMonitor);

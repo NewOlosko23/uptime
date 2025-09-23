@@ -7,7 +7,12 @@ import {
   deleteAlert,
   toggleAlert,
   testAlert,
-  getAlertActivity
+  getAlertActivity,
+  testEmailProviderEndpoint,
+  getEmailProviderInfoEndpoint,
+  testWhatsAppProviderEndpoint,
+  getWhatsAppProviderInfoEndpoint,
+  syncAlertsWithPreferences
 } from '../controllers/alertController.js';
 import { protect } from '../middleware/auth.js';
 import {
@@ -24,7 +29,12 @@ router.use(protect);
 // Routes
 router.get('/', validatePagination, getAlerts);
 router.get('/activity', getAlertActivity);
+router.get('/email-provider', getEmailProviderInfoEndpoint);
+router.get('/whatsapp-provider', getWhatsAppProviderInfoEndpoint);
 router.post('/', validateAlert, createAlert);
+router.post('/test-email', testEmailProviderEndpoint);
+router.post('/test-whatsapp', testWhatsAppProviderEndpoint);
+router.post('/sync-preferences', syncAlertsWithPreferences);
 router.get('/:id', validateObjectId('id'), getAlert);
 router.put('/:id', validateObjectId('id'), updateAlert);
 router.delete('/:id', validateObjectId('id'), deleteAlert);
