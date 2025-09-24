@@ -13,7 +13,7 @@ const execAsync = promisify(exec);
 // Store active monitoring jobs
 const monitoringJobs = new Map();
 
-// Ping function for server monitoring
+// Enhanced ping function for server monitoring with better error handling and fallbacks
 const pingServer = async (host, timeout = 5000) => {
   const startTime = Date.now();
   
@@ -25,33 +25,114 @@ const pingServer = async (host, timeout = 5000) => {
       targetHost = url.hostname;
     }
     
-    // Use ping command based on OS
+    // Validate host format
+    if (!targetHost || targetHost.trim() === '') {
+      throw new Error('Invalid host: empty or null hostname');
+    }
+    
+    // Clean hostname (remove any invalid characters)
+    targetHost = targetHost.trim().replace(/[<>|&$`\\]/g, '');
+    
+    // Use ping command based on OS with improved parameters
     const isWindows = process.platform === 'win32';
-    const pingCommand = isWindows 
-      ? `ping -n 1 -w ${timeout} ${targetHost}`
-      : `ping -c 1 -W ${Math.ceil(timeout / 1000)} ${targetHost}`;
+    const isMac = process.platform === 'darwin';
+    const isLinux = process.platform === 'linux';
+    
+    let pingCommand;
+    if (isWindows) {
+      // Windows: -n (count), -w (timeout in ms), -l (packet size)
+      pingCommand = `ping -n 1 -w ${timeout} -l 32 "${targetHost}"`;
+    } else if (isMac) {
+      // macOS: -c (count), -W (timeout in seconds), -s (packet size)
+      pingCommand = `ping -c 1 -W ${Math.ceil(timeout / 1000)} -s 32 "${targetHost}"`;
+    } else {
+      // Linux: -c (count), -W (timeout in seconds), -s (packet size)
+      pingCommand = `ping -c 1 -W ${Math.ceil(timeout / 1000)} -s 32 "${targetHost}"`;
+    }
+    
+    console.log(`[PING] Executing: ${pingCommand}`);
     
     const { stdout, stderr } = await execAsync(pingCommand);
     const responseTime = Date.now() - startTime;
     
-    // Check if ping was successful
-    const isSuccess = isWindows 
-      ? stdout.includes('Reply from') && !stdout.includes('Request timed out')
-      : stdout.includes('1 received') && !stderr;
+    // Enhanced success detection based on OS
+    let isSuccess = false;
+    let actualResponseTime = responseTime;
     
-    return {
+    if (isWindows) {
+      // Windows success indicators
+      isSuccess = stdout.includes('Reply from') && 
+                  !stdout.includes('Request timed out') &&
+                  !stdout.includes('Destination host unreachable') &&
+                  !stdout.includes('General failure');
+      
+      // Extract actual ping time from Windows output
+      const timeMatch = stdout.match(/time[<=](\d+)ms/i);
+      if (timeMatch) {
+        actualResponseTime = parseInt(timeMatch[1]);
+      }
+    } else {
+      // Unix/Linux/macOS success indicators
+      isSuccess = (stdout.includes('1 received') || stdout.includes('1 packets transmitted, 1 received')) &&
+                  !stderr &&
+                  !stdout.includes('100% packet loss') &&
+                  !stdout.includes('Network is unreachable');
+      
+      // Extract actual ping time from Unix output
+      const timeMatch = stdout.match(/time=(\d+(?:\.\d+)?)/i);
+      if (timeMatch) {
+        actualResponseTime = parseFloat(timeMatch[1]);
+      }
+    }
+    
+    // Additional validation for common failure patterns
+    if (stdout.includes('Name or service not known') || 
+        stdout.includes('Temporary failure in name resolution') ||
+        stdout.includes('ping: cannot resolve')) {
+      isSuccess = false;
+    }
+    
+    const result = {
       success: isSuccess,
-      responseTime,
+      responseTime: actualResponseTime,
       output: stdout,
-      error: isSuccess ? null : (stderr || 'Ping failed')
+      error: isSuccess ? null : (stderr || 'Ping failed - no response received')
     };
+    
+    console.log(`[PING] ${targetHost}: ${isSuccess ? 'SUCCESS' : 'FAILED'} (${actualResponseTime}ms)`);
+    
+    return result;
   } catch (error) {
     const responseTime = Date.now() - startTime;
+    const errorMessage = error.message || 'Unknown ping error';
+    
+    console.log(`[PING] ${host}: ERROR - ${errorMessage}`);
+    
+    // Fallback: Try HTTP ping for server endpoints
+    if (host.startsWith('http://') || host.startsWith('https://')) {
+      console.log(`[PING] Attempting HTTP fallback for ${host}`);
+      try {
+        const fallbackResult = await axios.head(host, { 
+          timeout: Math.min(timeout, 5000),
+          validateStatus: () => true // Accept any status code
+        });
+        
+        return {
+          success: true,
+          responseTime: Date.now() - startTime,
+          output: `HTTP fallback successful: ${fallbackResult.status}`,
+          error: null
+        };
+      } catch (fallbackError) {
+        console.log(`[PING] HTTP fallback also failed: ${fallbackError.message}`);
+      }
+    }
+    
     return {
       success: false,
       responseTime,
       output: '',
-      error: error.message
+      error: errorMessage
     };
   }
 };
@@ -176,19 +257,27 @@ export const performTestCheck = async (testConfig) => {
       }
       
     } else {
-      // Default HTTP monitoring for website/api types
+      // Enhanced HTTP monitoring for website/api types
       const config = {
         method: testConfig.method.toLowerCase(),
         url: testConfig.url,
         timeout: testConfig.timeout * 1000,
         validateStatus: (status) => status < 500, // Don't throw for 4xx errors
-        headers: {}
+        headers: {
+          'User-Agent': 'Avodal-Uptime-Monitor/1.0',
+          'Accept': '*/*',
+          'Connection': 'close'
+        },
+        maxRedirects: 5, // Allow up to 5 redirects
+        followRedirect: true
       };
 
       // Add custom headers
       if (testConfig.headers && testConfig.headers.length > 0) {
         testConfig.headers.forEach(header => {
-          config.headers[header.name] = header.value;
+          if (header.name && header.value) {
+            config.headers[header.name] = header.value;
+          }
         });
       }
 
@@ -205,7 +294,13 @@ export const performTestCheck = async (testConfig) => {
       // Add request body for POST/PUT requests
       if (testConfig.body && ['post', 'put', 'patch'].includes(testConfig.method.toLowerCase())) {
         config.data = testConfig.body;
+        // Set content-type if not already set
+        if (!config.headers['Content-Type']) {
+          config.headers['Content-Type'] = 'application/json';
+        }
       }
+
+      console.log(`[HTTP] Testing ${testConfig.method} ${testConfig.url}`);
 
       // Perform the request
       const response = await axios(config);
@@ -219,6 +314,8 @@ export const performTestCheck = async (testConfig) => {
         error: null,
         timestamp: new Date()
       };
+
+      console.log(`[HTTP] ${testConfig.url}: ${response.status} (${responseTime}ms)`);
 
       // Check if response meets expectations
       if (testConfig.expectedStatus && response.status !== testConfig.expectedStatus) {
@@ -314,19 +411,27 @@ export const performHealthCheck = async (monitor, io = null) => {
       };
       
     } else {
-      // Default HTTP monitoring for website/api types
+      // Enhanced HTTP monitoring for website/api types
       const config = {
         method: monitor.method.toLowerCase(),
         url: monitor.url,
         timeout: monitor.timeout * 1000,
         validateStatus: (status) => status < 500, // Don't throw for 4xx errors
-        headers: {}
+        headers: {
+          'User-Agent': 'Avodal-Uptime-Monitor/1.0',
+          'Accept': '*/*',
+          'Connection': 'close'
+        },
+        maxRedirects: 5, // Allow up to 5 redirects
+        followRedirect: true
       };
 
       // Add custom headers
       if (monitor.headers && monitor.headers.length > 0) {
         monitor.headers.forEach(header => {
-          config.headers[header.name] = header.value;
+          if (header.name && header.value) {
+            config.headers[header.name] = header.value;
+          }
         });
       }
 
@@ -343,7 +448,13 @@ export const performHealthCheck = async (monitor, io = null) => {
       // Add request body for POST/PUT requests
       if (monitor.body && ['post', 'put', 'patch'].includes(monitor.method.toLowerCase())) {
         config.data = monitor.body;
+        // Set content-type if not already set
+        if (!config.headers['Content-Type']) {
+          config.headers['Content-Type'] = 'application/json';
+        }
       }
+
+      console.log(`[HTTP] Monitoring ${monitor.method} ${monitor.url}`);
 
       // Perform the request
       const response = await axios(config);
@@ -357,6 +468,8 @@ export const performHealthCheck = async (monitor, io = null) => {
         error: null,
         timestamp: new Date()
       };
+
+      console.log(`[HTTP] ${monitor.url}: ${response.status} (${responseTime}ms)`);
 
       // Check if response meets expectations
       if (monitor.expectedStatus && response.status !== monitor.expectedStatus) {
@@ -439,6 +552,7 @@ const updateMonitorWithResult = async (monitor, result, io) => {
         responseTime: monitor.lastResponseTime,
         lastCheck: monitor.lastCheck,
         uptime: monitor.uptime,
+        statusCode: result.statusCode,
         timestamp: new Date().toISOString()
       };
       
