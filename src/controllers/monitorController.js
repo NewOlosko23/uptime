@@ -407,11 +407,11 @@ export const pingDomain = async (req, res, next) => {
       });
     }
 
-    // Import monitoring service
-    const { pingServer } = await import('../services/monitoringService.js');
+    // Import monitoring service with correct import syntax
+    const monitoringService = await import('../services/monitoringService.js');
     
     // Directly use the pingServer function
-    const pingResult = await pingServer(target, timeout * 1000);
+    const pingResult = await monitoringService.pingServer(target, timeout * 1000);
     
     res.json({
       success: true,

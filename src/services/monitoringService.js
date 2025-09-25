@@ -14,7 +14,7 @@ const execAsync = promisify(exec);
 const monitoringJobs = new Map();
 
 // Enhanced ping function for server monitoring with better error handling and fallbacks
-const pingServer = async (host, timeout = 5000) => {
+export const pingServer = async (host, timeout = 5000) => {
   const startTime = Date.now();
   
   try {
