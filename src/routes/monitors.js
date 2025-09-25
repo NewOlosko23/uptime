@@ -12,7 +12,8 @@ import {
   testMonitor,
   getMonitorMetrics,
   testMonitorEmail,
-  createDefaultAlertsForAllMonitors
+  createDefaultAlertsForAllMonitors,
+  pingDomain
 } from '../controllers/monitorController.js';
 import { protect, checkMonitorLimit } from '../middleware/auth.js';
 import {
@@ -32,6 +33,7 @@ router.get('/', validatePagination, getMonitors);
 router.get('/dashboard/chart', getDashboardChart);
 router.post('/', checkMonitorLimit, validateMonitor, createMonitor);
 router.post('/test', testMonitor);
+router.post('/ping', pingDomain);
 router.post('/create-default-alerts', createDefaultAlertsForAllMonitors);
 router.get('/:id', validateObjectId('id'), getMonitor);
 router.put('/:id', validateObjectId('id'), validateMonitorUpdate, updateMonitor);

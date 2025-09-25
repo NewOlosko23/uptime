@@ -393,6 +393,46 @@ export const testMonitor = async (req, res, next) => {
   }
 };
 
+// @desc    Ping a domain or IP directly
+// @route   POST /api/monitors/ping
+// @access  Private
+export const pingDomain = async (req, res, next) => {
+  try {
+    const { target, timeout = 5 } = req.body;
+    
+    if (!target) {
+      return res.status(400).json({
+        success: false,
+        message: 'Target domain or IP is required'
+      });
+    }
+
+    // Import monitoring service
+    const { pingServer } = await import('../services/monitoringService.js');
+    
+    // Directly use the pingServer function
+    const pingResult = await pingServer(target, timeout * 1000);
+    
+    res.json({
+      success: true,
+      message: pingResult.success ? 'Target is online' : 'Target is offline',
+      data: { 
+        online: pingResult.success,
+        responseTime: pingResult.responseTime,
+        output: pingResult.output,
+        error: pingResult.error
+      }
+    });
+  } catch (error) {
+    console.error('Ping error:', error);
+    res.status(500).json({
+      success: false,
+      message: `Error pinging target: ${error.message}`,
+      data: { online: false }
+    });
+  }
+};
+
 // @desc    Get monitor metrics/history
 // @route   GET /api/monitors/:id/metrics
 // @access  Private
